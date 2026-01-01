@@ -11,23 +11,28 @@ type Fetcher interface {
 	Fetch(url string) (body string, urls []string, err error)
 }
 
+//
+// Serial crawler
+//
+
 func SerialCrawl(url string, fetcher Fetcher, fetched map[string]string) {
 	if _, exists := fetched[url]; exists {
 		return
 	}
-
 	body, urls, err := fetcher.Fetch(url)
 	if err != nil {
 		fetched[url] = ""
 		return
 	}
-
 	fetched[url] = body
-
 	for _, u := range urls {
 		SerialCrawl(u, fetcher, fetched)
 	}
 }
+
+//
+// Concurrent crawler with shared state and Mutex
+//
 
 type protectedFetchedURLs struct {
 	mtx sync.Mutex
@@ -69,18 +74,66 @@ func MutexConcurrentCrawl(url string, fetcher Fetcher, fetched *protectedFetched
 	done.Wait()
 }
 
+//
+// Concurrent crawler with channels
+//
+
+type fetchResult struct {
+	url	 string
+	body string
+	urls []string
+	err  error
+}
+
+func worker(url string, ch chan fetchResult, fetcher Fetcher) {
+	body, urls, err := fetcher.Fetch(url)
+	ch <- fetchResult{url: url, body: body, urls: urls, err: err}
+}
+
+func coordinator(ch chan fetchResult, fetcher Fetcher) {
+	pending := 1
+	fetched := make(map[string]string)
+	for result := range ch {
+		if result.err != nil {
+			fetched[result.url] = ""
+		} else {
+			fetched[result.url] = result.body
+		}
+		for _, u := range result.urls {
+			_, exists := fetched[u]
+			if !exists {
+				fetched[u] = ""
+				pending++
+				go worker(u, ch, fetcher)
+			}
+		}
+		pending -= 1
+		if pending == 0 {
+			close(ch)
+			return
+		}
+	}
+}
+
+func ChannelConcurrentCrawl(url string, fetcher Fetcher) {
+	ch := make(chan fetchResult, 1)
+	go worker(url, ch, fetcher)
+	coordinator(ch, fetcher)
+}
+
 func main() {
 
-	serialFetchedURLs := make(map[string]string)
 	fmt.Println("=== SERIAL CRAWL ===")
-	SerialCrawl("https://golang.org/", fetcher, serialFetchedURLs)
+	SerialCrawl("https://golang.org/", fetcher, make(map[string]string))
 
 	concurrentFetchedURLs := &protectedFetchedURLs{
 		fetchedURLs: make(map[string]*string),
 	}
-	fmt.Println("=== CONCURRENT CRAWL ===")
+	fmt.Println("=== CONCURRENT MUTEX ===")
 	MutexConcurrentCrawl("https://golang.org/", fetcher, concurrentFetchedURLs)
 
+	fmt.Println("=== CONCURRENT CHANNEL ===")
+	ChannelConcurrentCrawl("https://golang.org/", fetcher)
 }
 
 // fakeFetcher is Fetcher that returns canned results.
