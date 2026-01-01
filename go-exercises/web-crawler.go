@@ -18,6 +18,7 @@ func SerialCrawl(url string, fetcher Fetcher, fetched map[string]string) {
 
 	body, urls, err := fetcher.Fetch(url)
 	if err != nil {
+		fetched[url] = ""
 		return
 	}
 
@@ -33,7 +34,7 @@ type protectedFetchedURLs struct {
 	fetchedURLs map[string]*string
 }
 
-func ConcurrentCrawl(url string, fetcher Fetcher, fetched *protectedFetchedURLs) {
+func MutexConcurrentCrawl(url string, fetcher Fetcher, fetched *protectedFetchedURLs) {
 	fetched.mtx.Lock()
 	_, exists := fetched.fetchedURLs[url]
 	if exists {
@@ -46,13 +47,15 @@ func ConcurrentCrawl(url string, fetcher Fetcher, fetched *protectedFetchedURLs)
 	body, urls, err := fetcher.Fetch(url)
 	if err != nil {
 		fetched.mtx.Lock()
-		delete(fetched.fetchedURLs, url)
+		emptyStrCpy := ""
+		fetched.fetchedURLs[url] = &emptyStrCpy
 		fetched.mtx.Unlock()
 		return
 	}
 	
 	fetched.mtx.Lock()
-	fetched.fetchedURLs[url] = &body
+	bodyCpy := body
+	fetched.fetchedURLs[url] = &bodyCpy
 	fetched.mtx.Unlock()
 
 	var done sync.WaitGroup
@@ -60,7 +63,7 @@ func ConcurrentCrawl(url string, fetcher Fetcher, fetched *protectedFetchedURLs)
 		done.Add(1)
 		go func(u string) {
 			defer done.Done()
-			ConcurrentCrawl(u, fetcher, fetched)
+			MutexConcurrentCrawl(u, fetcher, fetched)
 		}(u)
 	}
 	done.Wait()
@@ -69,24 +72,14 @@ func ConcurrentCrawl(url string, fetcher Fetcher, fetched *protectedFetchedURLs)
 func main() {
 
 	serialFetchedURLs := make(map[string]string)
-	SerialCrawl("https://golang.org/", fetcher, serialFetchedURLs)
 	fmt.Println("=== SERIAL CRAWL ===")
-	for url, body := range serialFetchedURLs {
-		fmt.Printf("%s %s\n", url, body)
-	}
+	SerialCrawl("https://golang.org/", fetcher, serialFetchedURLs)
 
 	concurrentFetchedURLs := &protectedFetchedURLs{
 		fetchedURLs: make(map[string]*string),
 	}
-	ConcurrentCrawl("https://golang.org/", fetcher, concurrentFetchedURLs)
 	fmt.Println("=== CONCURRENT CRAWL ===")
-	for url, bodyPtr := range concurrentFetchedURLs.fetchedURLs {
-		if bodyPtr != nil {
-			fmt.Printf("%s %s\n", url, *bodyPtr)
-		} else {
-			fmt.Printf("%s [FAILED]\n", url)
-		}
-	}	
+	MutexConcurrentCrawl("https://golang.org/", fetcher, concurrentFetchedURLs)
 
 }
 
@@ -100,8 +93,10 @@ type fakeResult struct {
 
 func (f fakeFetcher) Fetch(url string) (string, []string, error) {
 	if res, ok := f[url]; ok {
+		fmt.Printf("Found: %s %s\n", url, res.body)
 		return res.body, res.urls, nil
 	}
+	fmt.Printf("missing: %s\n", url)
 	return "", nil, fmt.Errorf("not found: %s", url)
 }
 
