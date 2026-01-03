@@ -23,7 +23,30 @@ type ExampleReply struct {
 }
 
 // Add your RPC definitions here.
+const (
+	TaskMap = "map"
+	TaskReduce = "reduce"
+	TaskWait = "wait"
+	TaskExit = "exit"
+)
 
+type RequestTaskArgs struct {	
+}
+
+type RequestTaskReply struct {
+	TaskType string
+	TaskID 	 int
+	FileName string
+	NReduce  int
+}
+
+type ReportTaskDoneArgs struct {
+	TaskType string
+	TaskID	 int
+}
+
+type ReportTaskDoneReply struct {
+}
 
 // Cook up a unique-ish UNIX-domain socket name
 // in /var/tmp, for the coordinator.
